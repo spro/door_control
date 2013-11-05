@@ -16,18 +16,45 @@ DEFAULT_UNLOCK_T = 5000
 
 # Initialization
 
-startup = (cb) ->
-    gpio.pin_setup RFID_DISABLE, 'out'
+startup_relay = ->
     gpio.pin_setup RELAY_ENABLE, 'out'
     gpio.pin_setup RED_LED, 'out'
     gpio.pin_setup GREEN_LED, 'out'
+
+startup_rfid = ->
+    gpio.pin_setup RFID_DISABLE, 'out'
     port = new serialport.SerialPort "/dev/ttyAMA0",
         baudRate: 2400
         buffer: 36
     port.on 'open', ->
         console.log "RFID communication port open."
         port.on 'data', handle_rfid_data
+
+startup_http = ->
+    http_server = http.createServer (req, res) ->
+        if req.url == '/unlock'
+            unlock()
+        res.end jade.compile(fs.readFileSync('door_page.jade').toString())()
+    http_server.listen 10101, console.log "HTTP Server listening."
+
+startup_drsproboto_client = ->
+    door_client = simple_client 'door', (message, respond) ->
+        message_parts = message.body.split(' ')
+        if message_parts[0] == 'unlock'
+            unlock(message_parts[1] * 1000)
+            respond 'unlocked'
+        else
+            respond 'no comprendo'
+
+startup = (cb) ->
+    startup_relay()
+    startup_drsproboto_client()
+    #startup_http()
+    #startup_rfid()
     cb() if cb
+
+# Teardown
+
 shutdown = (cb) ->
     gpio.pin_on RFID_DISABLE; gpio.pin_unexport RFID_DISABLE
     gpio.pin_off RELAY_ENABLE; gpio.pin_unexport RELAY_ENABLE
@@ -53,11 +80,10 @@ id_unauthorized = ->
 # Unlocking via relay control
 
 unlock = (t) ->
-    console.log "Unlocking."
     t = DEFAULT_UNLOCK_T if not t
+    console.log "Unlocking for #{ t/1000 }s."
     gpio.pin_on_for(RELAY_ENABLE, t)
-    gpio.pin_blink_for GREEN_LED, 100, 25
-
+    gpio.pin_blink_for GREEN_LED, 100, 5*t/1000
 
 # RFID Reading
 
@@ -81,20 +107,6 @@ handle_rfid_data = (data) ->
             # Write into the buffer
             found_buffer.push d
 
-# HTTP server that does what the button does
-http_server = http.createServer (req, res) ->
-    if req.url == '/unlock'
-        unlock()
-    res.end jade.compile(fs.readFileSync('door_page.jade').toString())()
-
 # GOGOGO
 
-startup ->
-    http_server.listen 10101, console.log "HTTP Server listening."
-
-    door_client = simple_client 'door', (message, respond) ->
-        if message.body == 'unlock'
-            unlock()
-            respond 'unlocked'
-        else
-            respond 'no comprendo'
+startup()
